@@ -14,7 +14,7 @@ honk-core [OPTIONS] [COMMAND]
 
 | 参数 | 默认值 | 作用 |
 | --- | --- | --- |
-| `-c`, `--config PATH` | `/etc/honk/config.dae` | 配置入口文件。使用 `--store db` 时，仅在数据库为空或 API 导入时读取。文件模式下 `mode`、`proxy` 和 `delay` 也读取此路径。`reload` 忽略此项，仅向运行中实例发送信号；运行实例重载其启动时使用的路径。 |
+| `-c`, `--config PATH` | Linux 为 `/etc/honk/config.dae`，Android 为 `/data/adb/honk/config.dae` | 配置入口文件。使用 `--store db` 时，仅在数据库为空或 API 导入时读取。文件模式下 `mode`、`proxy` 和 `delay` 也读取此路径。`reload` 忽略此项，仅向运行中实例发送信号；运行实例重载其启动时使用的路径。 |
 | `--log-file PATH` | 未设置 | 仅为本次引擎进程覆盖 `global.log_file`，不重写配置文件。相对路径在 `global.data_dir` 下解析，控制台日志保持启用。设置后，SIGHUP 会忽略被遮蔽配置值的变化，除非实际生效的目标发生改变。 |
 | `-b`, `--bpf-object PATH` | 内嵌目标文件 | 覆盖 `ebpf` 构建内嵌的目标文件。仅真实后端使用。 |
 | `--bpf-pin-root PATH` | `/sys/fs/bpf` | eBPF map 的 pin 根目录。 |
@@ -22,7 +22,7 @@ honk-core [OPTIONS] [COMMAND]
 | `-d`, `--debug` | 关 | 当 `RUST_LOG` 未提供有效过滤器时，选择 `debug` 作为默认控制台过滤器。 |
 | `--mock-ebpf` | 关 | 使用 `MockEbpfBackend`，不加载内核 eBPF。若配置请求 `global.nfqueue_enable: true`，honk 会记录警告并仅在本进程关闭 NFQUEUE 暂存。 |
 | `--store file\|db` | `file` | `db` 从 `<data-dir>/state/honk.db` 中的修订版本加载配置，数据库为空时导入 `-c`。见[配置数据库](./api.md#配置数据库--store-db)。 |
-| `--data-dir PATH` | `/var/lib/honk` | 数据目录，状态数据库位于其下的 `state/honk.db`，必须与 `global.data_dir` 相同。供 `--store db`、`config export` 与 `admin reset` 使用。 |
+| `--data-dir PATH` | Linux 为 `/var/lib/honk`，Android 为 `/data/adb/honk` | 数据目录，状态数据库位于其下的 `state/honk.db`，必须与 `global.data_dir` 相同。供 `--store db`、`config export` 与 `admin reset` 使用。 |
 
 两个二进制都提供 `-h`/`--help` 和 `-v`/`--version`。
 
@@ -56,7 +56,7 @@ CLI 与 Clash API 共用构建时版本号：发布构建使用 GitHub 标签名
 
 | 命令 | 当前行为 | 持久化 / 运行时影响 |
 | --- | --- | --- |
-| `reload` | 从已加锁的 `/run/honk-core.lock` 读取 PID 并发送 `SIGHUP`。 | 只报告信号成功送达；运行中进程随后记录 `applied` 或 `rejected`。mock 实例不持有该锁。 |
+| `reload` | 从已加锁的 Linux `/run/honk-core.lock` 或 Android `/data/adb/honk/honk-core.lock` 读取 PID 并发送 `SIGHUP`。 | 只报告信号成功送达；运行中进程随后记录 `applied` 或 `rejected`。mock 实例不持有该锁。 |
 | `mode <rule\|global\|direct>` | 加载 `--config`，将参数字符串赋给 `experimental.clash_api.default_mode`，并在重写结构化格式文件前完成校验。`.dae` 文件会被拒绝且保持不变，因为 writer 无法保留 dae 语法、注释或 include；请直接编辑这些源文件，或使用 `.toml`、`.yaml`、`.json`。 | 仅修改文件；不联系运行中的引擎，也不更改 dial mode。接受的字符串不同于正常 dial mode 值 `ip`、`domain`、`domain+`、`domain++`。 |
 | `proxy <group> <node>` | 检查组名和节点名各自存在，然后打印请求的选择；不检查节点是否属于该组。 | 不写入任何内容，也不联系运行中的引擎。 |
 | `config export --out PATH [--without-secrets]` | 把配置数据库的当前修订版本写成一份 `.dae` 文件；未给 `--without-secrets` 时补回监听凭据。无论守护进程是否运行，都通过以读写方式打开的 query-only 连接读取数据库。关闭该连接不会执行检查点，也不会删除 `honk.db-wal`；除 SQLite 可能创建的 `-shm` 索引外，唯一可能的写入是回滚崩溃遗留的日志。文件写完后才发布。 | 以 0600 权限新建 `PATH`，拒绝已存在的文件。 |
@@ -67,7 +67,40 @@ CLI 与 Clash API 共用构建时版本号：发布构建使用 GitHub 标签名
 
 使用 `--store db` 时，`proxy` 与 `delay` 读取当前修订版本，`mode` 拒绝执行。
 
-真实数据面进程在其生命周期内持有该锁。`reload` 会先确认文件仍被锁定，再信任其中的 PID；`kill(2)` 成功送达并不表示候选配置通过校验或需重启字段检查。
+真实数据面进程在其生命周期内持有该锁。Linux 使用 `/run/honk-core.lock`，Android 使用 `/data/adb/honk/honk-core.lock`。`reload` 会先确认文件仍被锁定，再信任其中的 PID；`kill(2)` 成功送达并不表示候选配置通过校验或需重启字段检查。
+
+### Root Android（arm64）
+
+`just build-android` 使用 Android NDK 构建 `aarch64-linux-android`，生成
+直接链接 Bionic 的 `honk-core`，不依赖 systemd 或 jemalloc。eBPF 对象仍以
+`bpfel-unknown-none` 目标编译，并嵌入 userspace 二进制。
+
+```bash
+export ANDROID_NDK_HOME=/opt/android-ndk
+just build-android
+adb push target/aarch64-linux-android/release/honk-core /data/adb/honk/honk-core
+adb shell su -c 'chmod 0755 /data/adb/honk/honk-core && /data/adb/honk/honk-core'
+```
+
+eBPF、TC、策略路由、透明套接字及可用的 NFQUEUE 都需要 root。设备必须运行
+Linux 6.12 或更新版本，提供 `/sys/kernel/btf/vmlinux`（或设置
+`HONK_VMLINUX_BTF`），并在 `/sys/fs/bpf` 挂载可写 bpffs。内核配置还必须提供
+内嵌对象使用的 hook 与 helper（TCX、`sk_lookup`、`sock_ops`、cgroup-BPF、BTF
+及所需 BPF helper）；Android 的 SELinux 策略必须允许 root 域使用它们。完整数据
+面实际至少需要 `CAP_BPF`、`CAP_NET_ADMIN` 和（用于 namespace/mount 设置的）
+`CAP_SYS_ADMIN`。将配置和 GeoIP/Geosite 资源放在 `/data/adb/honk` 下，或传入
+显式的 `--config` 与 `global.data_dir`。Android 没有 systemd 通知 socket，需要
+由调用方（例如 root shell 或 init 服务）负责进程监管。如果设备缺少
+NFQUEUE/nftables 支持，请设置
+`global.nfqueue_enable: false`；现有启动预检也会在队列不可用时降级，而不关闭
+eBPF 数据面。Android 的 namespace 兼容 bind mount 位于 `/data/adb/honk/netns`；
+如果 Android 拒绝这个可选挂载，引擎仍使用 FD 持有 namespace。
+
+6.12 基线是有意保留的，并非只看版本号：当前对象依赖 TCX、`sk_lookup`、
+`sock_ops`、cgroup storage 以及由 BTF 支持的 map 来发布编译路由。未来可以通过
+能力探测增加使用独立 `socket_assign`/`clsact` 对象、ABI 和清理路径的低版本
+Android profile；在没有这套替代数据面的情况下直接降低最低版本是不安全的，
+本分支不宣称支持这种用法。
 
 ## 环境变量
 

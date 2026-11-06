@@ -99,7 +99,7 @@ URL 带引号时，紧贴结束引号或一个完整 `(UA)` 后缀的 `#` 作为
 
 | 属性 | 当前行为 |
 | --- | --- |
-| 位置 | 状态数据库 `<data_dir>/state/honk.db` 的 `subscription_body` 表（文件权限 0600，目录 0700，见 [API 参考](./api.md#配置数据库--store-db)）；`data_dir` 默认值为 `/var/lib/honk`。 |
+| 位置 | 状态数据库 `<data_dir>/state/honk.db` 的 `subscription_body` 表（文件权限 0600，目录 0700，见 [API 参考](./api.md#配置数据库--store-db)）；Linux 上 `data_dir` 默认值为 `/var/lib/honk`，Android 上为 `/data/adb/honk`。 |
 | Key | 对带长度边界的 URL、配置中的 user agent 覆盖值（未设置或为空时为空）及有序标头 key/value 对计算 SHA-256，再用 URL-safe Base64 编码并添加 `.sub`。版本化的默认请求 UA 不参与键，因此默认订阅升级后仍保留已存正文。请求身份不会以明文暴露。 |
 | 写入边界 | HTTP 成功且正文通过导入校验后，在一个事务中保存完整原始响应，包括被拒绝的条目。 |
 | 容量限制 | 单个正文最多 8 MiB，全部正文合计最多 32 MiB。写入会超过 32 MiB 时，先删除已停用订阅的正文。仍然超出时拒绝写入，保留原正文，本次拉取报告 `subscription-store-write-failed`。订阅连续两次维护（每 60 秒一次）都未启用时，其正文被删除。`store_subscribe: false` 的启动若因 `cache_file`、`password_auth` 或 `--store db` 仍打开状态数据库，会清空该表。 |

@@ -619,7 +619,7 @@ PUT 仅在耐久写入并进入真实重载队列后返回 `202`。显式 POST �
 
 ### 配置数据库（`--store db`）
 
-`honk-core --store db` 将受管理的 `.dae` 源以修订形式保存在状态数据库 `<data_dir>/state/honk.db` 中。`data_dir` 取自 `--data-dir`（默认 `/var/lib/honk`），必须与 `global.data_dir` 相同，不回退到工作目录。`state` 目录权限为 0700、文件为 0600，二者均属守护进程用户且不能是符号链接。
+`honk-core --store db` 将受管理的 `.dae` 源以修订形式保存在状态数据库 `<data_dir>/state/honk.db` 中。`data_dir` 取自 `--data-dir`（Linux 默认 `/var/lib/honk`，Android 默认 `/data/adb/honk`），必须与 `global.data_dir` 相同，不回退到工作目录。`state` 目录权限为 0700、文件为 0600，二者均属守护进程用户且不能是符号链接。
 
 启动或执行 `honk-core admin reset` 时，若二者属守护进程用户且只多出组或其他用户的读、执行权限，honk 移除这些权限并记录警告。其他情况一律拒绝，组或其他用户可写时也是如此。`config export` 与其他离线读取遇到 0700 与 0600 以外的权限一律拒绝，不修改权限。
 

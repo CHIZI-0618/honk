@@ -14,7 +14,7 @@ honk-core [OPTIONS] [COMMAND]
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `-c`, `--config PATH` | `/etc/honk/config.dae` | Configuration entry file. With `--store db` it is read only while the db is empty, or by an API import. `mode`, `proxy`, and `delay` also read this path in file mode. `reload` ignores it and signals the running instance, which reloads its own startup path. |
+| `-c`, `--config PATH` | `/etc/honk/config.dae` (Linux), `/data/adb/honk/config.dae` (Android) | Configuration entry file. With `--store db` it is read only while the db is empty, or by an API import. `mode`, `proxy`, and `delay` also read this path in file mode. `reload` ignores it and signals the running instance, which reloads its own startup path. |
 | `--log-file PATH` | Unset | Override `global.log_file` for this engine process without rewriting the configuration. Relative paths resolve below `global.data_dir`; console logging remains enabled. While set, SIGHUP ignores changes to the shadowed config value unless the effective destination changes. |
 | `-b`, `--bpf-object PATH` | Embedded object | Override the object embedded by an `ebpf` build. Used only by the real backend. |
 | `--bpf-pin-root PATH` | `/sys/fs/bpf` | Root for pinned eBPF maps. |
@@ -22,7 +22,7 @@ honk-core [OPTIONS] [COMMAND]
 | `-d`, `--debug` | Off | Select `debug` as the default console filter when `RUST_LOG` does not provide a valid filter. |
 | `--mock-ebpf` | Off | Use `MockEbpfBackend` instead of loading kernel eBPF. If `global.nfqueue_enable: true` is requested, honk logs a warning and disables NFQUEUE staging for this process. |
 | `--store file\|db` | `file` | `db` runs from the revisions in `<data-dir>/state/honk.db` and imports `-c` into an empty db. See the [configuration db](./api.md#configuration-db---store-db). |
-| `--data-dir PATH` | `/var/lib/honk` | Data directory holding the state db, `state/honk.db`. It must equal `global.data_dir`. Used by `--store db`, `config export` and `admin reset`. |
+| `--data-dir PATH` | `/var/lib/honk` (Linux), `/data/adb/honk` (Android) | Data directory holding the state db, `state/honk.db`. It must equal `global.data_dir`. Used by `--store db`, `config export` and `admin reset`. |
 
 Both binaries provide `-h`/`--help` and `-v`/`--version`.
 
@@ -56,7 +56,7 @@ Levels carry fixed meanings, so the default `info` stays low-rate:
 
 | Command | Current behavior | Persistence / runtime effect |
 | --- | --- | --- |
-| `reload` | Reads the PID from the locked `/run/honk-core.lock` and sends `SIGHUP`. | Reports successful signal delivery only. The running process later logs `applied` or `rejected`. Mock instances do not own the lock. |
+| `reload` | Reads the PID from the locked `/run/honk-core.lock` (Linux) or `/data/adb/honk/honk-core.lock` (Android) and sends `SIGHUP`. | Reports successful signal delivery only. The running process later logs `applied` or `rejected`. Mock instances do not own the lock. |
 | `mode <rule\|global\|direct>` | Loads `--config`, assigns the supplied string to `experimental.clash_api.default_mode`, and validates before rewriting structured-format files. `.dae` files are rejected unchanged because the writer cannot preserve dae syntax, comments, or includes; edit those sources directly or use `.toml`, `.yaml`, or `.json`. | File-only; it does not contact the running engine or change dial mode. The accepted strings differ from the normal dial-mode values `ip`, `domain`, `domain+`, and `domain++`. |
 | `proxy <group> <node>` | Checks that the group and node names each exist, then prints the requested selection. It does not check membership. | Nothing is written and no running engine is contacted. |
 | `config export --out PATH [--without-secrets]` | Writes the active revision of the configuration db as one `.dae` file, with listener secrets restored unless `--without-secrets`. It reads the db through a query-only connection that opens read-write, whether or not a daemon runs. Closing it never checkpoints or deletes `honk.db-wal`; apart from the `-shm` index SQLite may create, the only write it can cause is rolling back a journal a crash left. It publishes the file only once it is complete. | Creates `PATH` with mode 0600 and refuses an existing file. |
@@ -65,7 +65,46 @@ Levels carry fixed meanings, so the default `info` stays low-rate:
 
 With `--store db`, `proxy` and `delay` read the active revision and `mode` refuses.
 
-A real-datapath process holds the lock for its lifetime. `reload` verifies that the file is still locked before trusting its PID; successful `kill(2)` delivery does not mean the candidate configuration passed validation or restart-required checks.
+A real-datapath process holds the lock for its lifetime. Linux uses `/run/honk-core.lock`; Android uses `/data/adb/honk/honk-core.lock`. `reload` verifies that the file is still locked before trusting its PID; successful `kill(2)` delivery does not mean the candidate configuration passed validation or restart-required checks.
+
+### Rooted Android (arm64)
+
+The `just build-android` recipe builds `aarch64-linux-android` with the Android
+NDK and produces a Bionic-linked `honk-core` binary without the systemd or
+jemalloc dependencies. The eBPF object is still compiled for
+`bpfel-unknown-none` and embedded in the userspace binary.
+
+```bash
+export ANDROID_NDK_HOME=/opt/android-ndk
+just build-android
+adb push target/aarch64-linux-android/release/honk-core /data/adb/honk/honk-core
+adb shell su -c 'chmod 0755 /data/adb/honk/honk-core && /data/adb/honk/honk-core'
+```
+
+Root is required for eBPF, TC, policy routing, transparent sockets and any
+available NFQUEUE setup. The device must run Linux 6.12 or newer, expose
+`/sys/kernel/btf/vmlinux` (or set `HONK_VMLINUX_BTF`), and have a writable
+bpffs mounted at `/sys/fs/bpf`. The kernel configuration must also provide
+the hooks and helpers used by the embedded object (TCX, `sk_lookup`,
+`sock_ops`, cgroup-BPF, BTF and the required BPF helpers); Android's SELinux
+policy must permit the root domain to use them. `CAP_BPF`, `CAP_NET_ADMIN` and
+`CAP_SYS_ADMIN` (for namespace/mount setup) are the practical minimums for
+the full datapath. Install the configuration and GeoIP/Geosite assets below
+`/data/adb/honk`, or pass explicit `--config` and `global.data_dir` paths.
+Android has no systemd notification socket; process supervision is provided by
+the caller (for example, a root shell or init service). If Android lacks
+NFQUEUE/nftables support, set
+`global.nfqueue_enable: false`; the existing startup preflight also downgrades
+an unavailable queue without disabling the eBPF datapath. The Android
+namespace compatibility bind mount lives under `/data/adb/honk/netns`; the
+engine remains FD-owned if Android refuses that optional mount.
+
+The 6.12 baseline is intentional rather than a version-only probe: the current
+object publishes compiled routing through TCX, `sk_lookup`, `sock_ops`, cgroup
+storage and BTF-backed maps. A lower-kernel Android profile can be added later
+with capability probing and a separate `socket_assign`/`clsact` object, ABI and
+cleanup path; changing this minimum without that alternate datapath would be
+unsafe and is not supported by this branch.
 
 An exhausted [compiled-routing publication counter](../design/routing.md#synchronous-slots-and-atomic-publication) requires restart; this is separate from ordinary SIGHUP and DNS runtime reloads.
 

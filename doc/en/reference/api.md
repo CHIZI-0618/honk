@@ -671,7 +671,7 @@ When a configured secret or password login protects the listener, all sessions u
 
 ### Configuration db (`--store db`)
 
-`honk-core --store db` keeps the administered `.dae` sources as revisions in the state db, `<data_dir>/state/honk.db`. `data_dir` is `--data-dir` (default `/var/lib/honk`) and must equal `global.data_dir`. There is no working-directory fallback.
+`honk-core --store db` keeps the administered `.dae` sources as revisions in the state db, `<data_dir>/state/honk.db`. `data_dir` is `--data-dir` (default `/var/lib/honk` on Linux, `/data/adb/honk` on Android) and must equal `global.data_dir`. There is no working-directory fallback.
 
 The `state` directory is 0700 and the file 0600, both owned by the daemon user and neither a symlink. At startup or `honk-core admin reset`, if either is owned by the daemon user and has only extra group or other read or execute bits, honk removes those bits with a warning. Anything else, including group- or other-writable modes, is refused.
 
